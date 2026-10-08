@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests.helpers import ROOT
-
 from llmgate.cli import run
 from llmgate.config import get_settings
+from tests.helpers import ROOT
 
 
 def test_cli_create_list_revoke(tmp_path: Path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]

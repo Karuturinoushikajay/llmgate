@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+
 from tests.helpers import auth_header, chat_body, parse_sse
 
 
