@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from typing import Protocol
 
+import httpx
+
 from llmgate.core.schemas import (
     ChatCompletionChunk,
     ChatCompletionRequest,
@@ -19,10 +21,14 @@ class ChatProvider(Protocol):
         self,
         request: ChatCompletionRequest,
         upstream_model: str,
+        *,
+        upstream_timeout: httpx.Timeout | None = None,
     ) -> ChatCompletionResponse: ...
 
     def stream(
         self,
         request: ChatCompletionRequest,
         upstream_model: str,
+        *,
+        upstream_timeout: httpx.Timeout | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]: ...

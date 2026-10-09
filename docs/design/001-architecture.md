@@ -18,7 +18,7 @@ Each provider module owns three translations:
 2. Vendor streaming events to OpenAI chunks (`content_block_delta`, Gemini SSE, Ollama NDJSON).
 3. Vendor token counts to `prompt_tokens` / `completion_tokens` / `total_tokens`.
 
-The HTTP route never mentions those payloads. It asks `ChatPipeline` for a provider, then calls `complete` or `stream`. The pipeline is the seam for milestones 2 through 4: retries, fallback, circuit breakers, semantic cache, complexity routing, and guardrails wrap the pipeline. Adding a provider is a new class plus a registry entry, not a change to the route.
+The HTTP route never mentions those payloads. It calls `ChatPipeline.complete` or `ChatPipeline.open_stream`. Milestone 2 moved retries, fallback, circuit breakers, and rate limiting into that class; the route copies the headers the pipeline returns. Semantic cache, complexity routing, and guardrails should wrap the same class. Adding a provider is a new class plus a registry entry, not a change to the route. See [002-reliability.md](002-reliability.md).
 
 Model names resolve in two steps. The YAML registry is for stable aliases (`claude-3-5-sonnet` to a dated upstream id). A `provider/model` prefix is an explicit override so operators can call a model that is not in the file, which matters while the registry is still small.
 
@@ -46,14 +46,14 @@ A gateway key is a bearer token. Storing it in Postgres would make a database ba
 
 Upstream authentication failures are returned as 502, not 401. A 401 means the caller's gateway key is wrong. A bad `OPENAI_API_KEY` is our misconfiguration, and reporting it as 401 would send clients rotating a key that is fine.
 
-## What is wired but not used yet
+## Redis
 
-Redis is connected during startup and `GET /healthz` pings it, so Compose fails closed if Redis is down. No feature reads or writes keys in Redis. Milestone 2's token bucket and milestone 3's vector cache should use the client already stored on `GatewayState` rather than creating another one.
+Redis is connected during startup and `GET /healthz` pings it, so Compose fails closed if Redis is down. Milestone 2 stores circuit-breaker hashes and token buckets on that client (`llmgate:breaker:{provider}`, `llmgate:rl:{key_id}:requests`, `llmgate:rl:{key_id}:tokens`). Milestone 3's vector cache should use the same client rather than creating another one.
 
 Schema changes go through Alembic. The process runs `upgrade head` on startup so `docker compose up` is enough. Tests use the same migration path against SQLite; CI also runs it against Postgres.
 
-## Non-goals for this milestone
+## Non-goals for milestone 1
 
-No retries, no fallback, no cache, no budgets, no PII redaction, no dashboard. Those are real products and they each want their own tests. Shipping them half-finished inside the adapter would make the translation layer impossible to reason about.
+Milestone 1 shipped no retries, no fallback, no cache, no budgets, no PII redaction, and no dashboard. Those are separate products. Shipping them half-finished inside an adapter would make the translation layer impossible to reason about.
 
-The honest limitation to mention in an interview: a single gateway process with one shared `httpx` client, no request log table, and no per-key quota. The code is structured so those are additions, but they are not built.
+Milestone 2 added retries, fallback, per-provider breakers, and per-key quotas. Still absent, and worth saying in an interview: no request log table, no semantic cache, no budget ledger, and a single shared `httpx` client per process. The limiter and the breaker are already shared across processes through Redis.

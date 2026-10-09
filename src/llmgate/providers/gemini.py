@@ -21,7 +21,12 @@ from llmgate.core.schemas import (
 )
 from llmgate.core.usage import usage_from_gemini
 from llmgate.providers.content import gemini_parts, message_text
-from llmgate.providers.http import iter_sse_json, raise_for_status, require_credentials
+from llmgate.providers.http import (
+    iter_sse_json,
+    raise_for_status,
+    request_timeout,
+    require_credentials,
+)
 
 _FINISH_REASONS = {
     "STOP": "stop",
@@ -49,21 +54,26 @@ class GeminiProvider:
         self,
         request: ChatCompletionRequest,
         upstream_model: str,
+        *,
+        upstream_timeout: httpx.Timeout | None = None,
     ) -> ChatCompletionResponse:
         require_credentials(self.name, self.api_key)
         response = await self.http.post(
             self._url(upstream_model, stream=False),
             json=self._payload(request),
             headers=self._headers(),
+            timeout=request_timeout(upstream_timeout),
         )
         if response.status_code >= 400:
-            raise_for_status(self.name, response.status_code, response.content)
+            raise_for_status(self.name, response.status_code, response.content, response.headers)
         return self._response_from_upstream(response.json(), request.model)
 
     async def stream(
         self,
         request: ChatCompletionRequest,
         upstream_model: str,
+        *,
+        upstream_timeout: httpx.Timeout | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         require_credentials(self.name, self.api_key)
         completion_id = new_completion_id()
@@ -76,10 +86,11 @@ class GeminiProvider:
             self._url(upstream_model, stream=True),
             json=self._payload(request),
             headers=self._headers(),
+            timeout=request_timeout(upstream_timeout),
         ) as response:
             if response.status_code >= 400:
                 body = await response.aread()
-                raise_for_status(self.name, response.status_code, body)
+                raise_for_status(self.name, response.status_code, body, response.headers)
             async for event in iter_sse_json(response):
                 usage = usage_from_gemini(_dict(event.get("usageMetadata")))
                 if usage.total_tokens or usage.prompt_tokens or usage.completion_tokens:

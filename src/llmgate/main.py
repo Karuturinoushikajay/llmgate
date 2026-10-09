@@ -21,9 +21,12 @@ from llmgate.api.routes.health import router as health_router
 from llmgate.api.routes.models import router as models_router
 from llmgate.api.state import GatewayState, RedisClient
 from llmgate.config import Settings, get_settings, resolve_models_path
+from llmgate.core.breaker import CircuitBreaker
 from llmgate.core.errors import GatewayError
+from llmgate.core.limiter import TokenBucketLimiter
 from llmgate.core.pipeline import ChatPipeline
 from llmgate.core.registry import ModelRegistry
+from llmgate.core.retry import RetryPolicy
 from llmgate.core.schemas import unix_timestamp
 from llmgate.logging import configure_logging
 from llmgate.providers import build_providers
@@ -73,6 +76,24 @@ def create_app(
                 loaded_at=unix_timestamp(),
             )
             providers = build_providers(settings, http)
+            pipeline = ChatPipeline(
+                registry,
+                providers,
+                retry_policy=RetryPolicy(
+                    max_attempts=settings.retry_max_attempts,
+                    base_delay_seconds=settings.retry_base_delay_seconds,
+                    max_delay_seconds=settings.retry_max_delay_seconds,
+                    retry_after_cap_seconds=settings.retry_after_cap_seconds,
+                ),
+                breaker=CircuitBreaker(
+                    redis,
+                    failure_threshold=settings.breaker_failure_threshold,
+                    cooldown_seconds=settings.breaker_cooldown_seconds,
+                    half_open_max=settings.breaker_half_open_max,
+                ),
+                limiter=TokenBucketLimiter(redis),
+                output_token_reservation=settings.output_token_reservation,
+            )
             app.state.gateway = GatewayState(
                 settings=settings,
                 engine=engine,
@@ -81,7 +102,7 @@ def create_app(
                 http=http,
                 registry=registry,
                 providers=providers,
-                pipeline=ChatPipeline(registry, providers),
+                pipeline=pipeline,
             )
             log.info("llmgate.started", version=__version__, models=len(registry.list_models()))
             if settings.using_default_secrets:
@@ -121,7 +142,11 @@ def create_app(
 def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(GatewayError)
     async def gateway_error_handler(_request: Request, exc: GatewayError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content=exc.to_body())
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.to_body(),
+            headers=exc.response_headers or None,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:

@@ -14,16 +14,23 @@ ProviderName = Literal["openai", "anthropic", "gemini", "ollama"]
 KNOWN_PROVIDERS: frozenset[str] = frozenset({"openai", "anthropic", "gemini", "ollama"})
 
 
+class ModelTarget(BaseModel):
+    provider: ProviderName
+    upstream_model: str = Field(min_length=1)
+
+
 class ModelEntry(BaseModel):
     id: str = Field(min_length=1)
     provider: ProviderName
     upstream_model: str = Field(min_length=1)
+    fallbacks: list[ModelTarget] = Field(default_factory=list)
 
 
 class ResolvedModel(BaseModel):
     public_name: str
     provider: ProviderName
     upstream_model: str
+    targets: list[ModelTarget]
 
 
 class ModelRegistry:
@@ -52,18 +59,25 @@ class ModelRegistry:
         if "/" in name:
             provider, _, upstream = name.partition("/")
             if provider in KNOWN_PROVIDERS and upstream:
-                return ResolvedModel(
-                    public_name=name,
+                target = ModelTarget(
                     provider=provider,  # type: ignore[arg-type]
                     upstream_model=upstream,
+                )
+                return ResolvedModel(
+                    public_name=name,
+                    provider=target.provider,
+                    upstream_model=target.upstream_model,
+                    targets=[target],
                 )
         entry = self._models.get(name)
         if entry is None:
             raise ModelNotFoundError(name)
+        primary = ModelTarget(provider=entry.provider, upstream_model=entry.upstream_model)
         return ResolvedModel(
             public_name=entry.id,
             provider=entry.provider,
             upstream_model=entry.upstream_model,
+            targets=[primary, *entry.fallbacks],
         )
 
     def list_models(self) -> list[ModelEntry]:

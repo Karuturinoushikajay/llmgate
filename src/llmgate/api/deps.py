@@ -24,6 +24,8 @@ class ApiKeyContext:
     id: UUID
     name: str
     key_prefix: str
+    requests_per_minute: int
+    tokens_per_minute: int
 
 
 def get_gateway(request: Request) -> GatewayState:
@@ -56,7 +58,22 @@ async def require_api_key(
         if row is None:
             raise AuthenticationError()
         api_key_id_var.set(str(row.id))
-        return ApiKeyContext(id=row.id, name=row.name, key_prefix=row.key_prefix)
+        settings = gateway.settings
+        return ApiKeyContext(
+            id=row.id,
+            name=row.name,
+            key_prefix=row.key_prefix,
+            requests_per_minute=(
+                settings.default_requests_per_minute
+                if row.requests_per_minute is None
+                else row.requests_per_minute
+            ),
+            tokens_per_minute=(
+                settings.default_tokens_per_minute
+                if row.tokens_per_minute is None
+                else row.tokens_per_minute
+            ),
+        )
 
 
 async def require_master_key(

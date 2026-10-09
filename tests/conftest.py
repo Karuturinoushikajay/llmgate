@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import os
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 
 import httpx
 import pytest
 from fakeredis import FakeAsyncRedis
+from redis.asyncio import Redis
 
 from llmgate.config import Settings
+from llmgate.core.redis_client import RedisClient
 from llmgate.main import create_app
 from tests.helpers import MASTER_KEY, ROOT
 
 
-def build_settings(database_url: str, **overrides: str) -> Settings:
+def build_settings(database_url: str, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "database_url": database_url,
         "redis_url": "redis://localhost:6379/0",
@@ -33,11 +37,54 @@ def build_settings(database_url: str, **overrides: str) -> Settings:
 
 
 @pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+async def redis_client() -> AsyncIterator[RedisClient]:
+    """fakeredis (with lupa) locally. CI sets LLMGATE_TEST_REDIS_URL to real Redis."""
+    url = os.environ.get("LLMGATE_TEST_REDIS_URL")
+    if url:
+        client: RedisClient = Redis.from_url(url, decode_responses=True)
+        await client.flushdb()  # type: ignore[attr-defined]
+    else:
+        client = FakeAsyncRedis(decode_responses=True)
+    try:
+        yield client
+    finally:
+        if url:
+            await client.flushdb()  # type: ignore[attr-defined]
+        await client.aclose()
+
+
+@pytest.fixture
+async def client(tmp_path: Path, redis_client: RedisClient) -> AsyncIterator[httpx.AsyncClient]:
+    async with _http_client(
+        tmp_path,
+        redis_client,
+        retry_max_attempts=1,
+        retry_base_delay_seconds=0,
+    ) as http:
+        yield http
+
+
+@pytest.fixture
+def make_client(
+    tmp_path: Path,
+    redis_client: RedisClient,
+) -> Callable[..., AbstractAsyncContextManager[httpx.AsyncClient]]:
+    def _make(**overrides: object) -> AbstractAsyncContextManager[httpx.AsyncClient]:
+        settings = {"retry_max_attempts": 1, "retry_base_delay_seconds": 0}
+        settings.update(overrides)
+        return _http_client(tmp_path, redis_client, **settings)
+
+    return _make
+
+
+@asynccontextmanager
+async def _http_client(
+    tmp_path: Path,
+    redis: RedisClient,
+    **overrides: object,
+) -> AsyncIterator[httpx.AsyncClient]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'llmgate.db'}"
-    app = create_app(
-        build_settings(database_url), redis_client=FakeAsyncRedis(decode_responses=True)
-    )
+    app = create_app(build_settings(database_url, **overrides), redis_client=redis)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:

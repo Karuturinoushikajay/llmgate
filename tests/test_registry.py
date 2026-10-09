@@ -23,12 +23,23 @@ def test_shipped_registry_loads() -> None:
     }
 
 
+def test_fallback_chain_is_primary_then_configured_order() -> None:
+    registry = ModelRegistry.load(ROOT / "config" / "models.yaml", loaded_at=1)
+    resolved = registry.resolve("gpt-4o")
+    assert [(target.provider, target.upstream_model) for target in resolved.targets] == [
+        ("openai", "gpt-4o"),
+        ("anthropic", "claude-3-5-haiku-20241022"),
+        ("gemini", "gemini-2.0-flash"),
+    ]
+
+
 def test_provider_prefix_bypasses_registry() -> None:
     registry = ModelRegistry.load(ROOT / "config" / "models.yaml", loaded_at=1)
     resolved = registry.resolve("ollama/llama3.2:latest")
     assert resolved.provider == "ollama"
     assert resolved.upstream_model == "llama3.2:latest"
     assert resolved.public_name == "ollama/llama3.2:latest"
+    assert len(resolved.targets) == 1
 
 
 def test_unknown_model() -> None:

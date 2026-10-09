@@ -33,12 +33,21 @@ def key_prefix(raw_key: str) -> str:
     return raw_key[:_PREFIX_LEN]
 
 
-async def create_api_key(session: AsyncSession, *, name: str, pepper: str) -> tuple[ApiKey, str]:
+async def create_api_key(
+    session: AsyncSession,
+    *,
+    name: str,
+    pepper: str,
+    requests_per_minute: int | None = None,
+    tokens_per_minute: int | None = None,
+) -> tuple[ApiKey, str]:
     raw_key = generate_api_key()
     row = ApiKey(
         name=name,
         key_prefix=key_prefix(raw_key),
         key_hash=hash_api_key(raw_key, pepper),
+        requests_per_minute=requests_per_minute,
+        tokens_per_minute=tokens_per_minute,
     )
     session.add(row)
     await session.flush()

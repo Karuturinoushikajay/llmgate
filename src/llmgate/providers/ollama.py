@@ -24,7 +24,7 @@ from llmgate.core.schemas import (
 )
 from llmgate.core.usage import usage_from_ollama
 from llmgate.providers.content import ollama_message
-from llmgate.providers.http import raise_for_status
+from llmgate.providers.http import raise_for_status, request_timeout
 
 _FINISH_REASONS = {
     "stop": "stop",
@@ -43,19 +43,24 @@ class OllamaProvider:
         self,
         request: ChatCompletionRequest,
         upstream_model: str,
+        *,
+        upstream_timeout: httpx.Timeout | None = None,
     ) -> ChatCompletionResponse:
         response = await self.http.post(
             self._url(),
             json=self._payload(request, upstream_model, stream=False),
+            timeout=request_timeout(upstream_timeout),
         )
         if response.status_code >= 400:
-            raise_for_status(self.name, response.status_code, response.content)
+            raise_for_status(self.name, response.status_code, response.content, response.headers)
         return self._response_from_upstream(response.json(), request.model)
 
     async def stream(
         self,
         request: ChatCompletionRequest,
         upstream_model: str,
+        *,
+        upstream_timeout: httpx.Timeout | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         completion_id = new_completion_id()
         created = unix_timestamp()
@@ -64,10 +69,11 @@ class OllamaProvider:
             "POST",
             self._url(),
             json=self._payload(request, upstream_model, stream=True),
+            timeout=request_timeout(upstream_timeout),
         ) as response:
             if response.status_code >= 400:
                 body = await response.aread()
-                raise_for_status(self.name, response.status_code, body)
+                raise_for_status(self.name, response.status_code, body, response.headers)
             async for line in response.aiter_lines():
                 if not line.strip():
                     continue

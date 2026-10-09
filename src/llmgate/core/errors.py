@@ -14,6 +14,9 @@ class GatewayError(Exception):
         error_type: str,
         param: str | None = None,
         code: str | None = None,
+        retryable: bool = False,
+        retry_after: float | None = None,
+        response_headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -21,6 +24,9 @@ class GatewayError(Exception):
         self.error_type = error_type
         self.param = param
         self.code = code
+        self.retryable = retryable
+        self.retry_after = retry_after
+        self.response_headers = dict(response_headers or {})
 
     def to_body(self) -> dict[str, Any]:
         return {
@@ -87,12 +93,22 @@ class NotFoundError(GatewayError):
 
 
 class RateLimitError(GatewayError):
-    def __init__(self, message: str = "Rate limit exceeded") -> None:
+    def __init__(
+        self,
+        message: str = "Rate limit exceeded",
+        *,
+        retry_after: float | None = None,
+        response_headers: dict[str, str] | None = None,
+        retryable: bool = True,
+    ) -> None:
         super().__init__(
             message,
             status_code=429,
             error_type="rate_limit_error",
             code="rate_limit_exceeded",
+            retryable=retryable,
+            retry_after=retry_after,
+            response_headers=response_headers,
         )
 
 
@@ -103,14 +119,31 @@ class ProviderError(GatewayError):
         *,
         status_code: int = 502,
         code: str = "provider_error",
+        retryable: bool | None = None,
     ) -> None:
         error_type = "timeout" if status_code == 504 else "server_error"
+        if retryable is None:
+            retryable = status_code >= 500
         super().__init__(
             message,
             status_code=status_code,
             error_type=error_type,
             code=code,
+            retryable=retryable,
         )
+
+
+class CircuitOpenError(ProviderError):
+    """The provider is skipped until the breaker cools down. Try the next fallback."""
+
+    def __init__(self, provider: str) -> None:
+        super().__init__(
+            f"Circuit breaker open for provider '{provider}'",
+            status_code=503,
+            code="circuit_open",
+            retryable=False,
+        )
+        self.provider = provider
 
 
 class ProviderNotConfiguredError(GatewayError):

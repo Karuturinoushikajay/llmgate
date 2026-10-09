@@ -37,10 +37,10 @@ flowchart LR
   Pipe --> Gem
   Pipe --> Oll
   API --> Logs
-  API -. connected, unused by features yet .-> Redis
+  Pipe --> Redis
 ```
 
-The chat pipeline is the extension point for later milestones: retries, fallback, caching, routing, and guardrails wrap that class instead of the HTTP handlers.
+The chat pipeline owns retries, provider fallback, circuit breakers, and per-key rate limits. Later milestones (caching, routing, guardrails) wrap that class instead of the HTTP handlers.
 
 ## Quickstart
 
@@ -131,7 +131,9 @@ Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) are read
 
 `config/models.yaml` maps a public model id to a provider and an upstream model name. `GET /v1/models` lists those entries.
 
-A name with a provider prefix skips the registry and selects the provider directly:
+A name with a provider prefix skips the registry and selects that provider directly, with no fallback chain. Registry aliases can list fallbacks. `gpt-4o` tries OpenAI, then Anthropic Haiku, then Gemini Flash. `gpt-4o-mini` has no fallbacks.
+
+Responses include `x-llmgate-provider` and `x-llmgate-model` for the upstream that actually served the call. The JSON `model` field stays the name you requested. Rate-limit responses are OpenAI-shaped 429s with `Retry-After` and `x-ratelimit-*` headers. `x-llmgate-timeout` may only shorten the per-attempt upstream read timeout.
 
 | Request model | Provider | Upstream model |
 | --- | --- | --- |
@@ -148,7 +150,7 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 | Variable | Purpose |
 | --- | --- |
 | `LLMGATE_DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://...`) |
-| `LLMGATE_REDIS_URL` | Redis URL. Connected on startup; rate limiting arrives in milestone 2 |
+| `LLMGATE_REDIS_URL` | Redis URL. Circuit breakers and token buckets |
 | `LLMGATE_MASTER_KEY` | Bearer token for `/admin` and not a gateway key |
 | `LLMGATE_KEY_PEPPER` | HMAC pepper for gateway key hashes. Changing it invalidates existing keys |
 | `LLMGATE_MODELS_PATH` | Registry YAML. Default `config/models.yaml` |
@@ -157,6 +159,14 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` | Anthropic Messages API |
 | `GEMINI_API_KEY` / `GEMINI_BASE_URL` | Gemini `generateContent` |
 | `OLLAMA_BASE_URL` | Ollama daemon, native `/api/chat` |
+| `LLMGATE_UPSTREAM_TIMEOUT_SECONDS` | Per-attempt upstream read timeout. Default 60. Connect timeout defaults to 10 |
+| `LLMGATE_RETRY_MAX_ATTEMPTS` | Attempts per target, including the first. Default 3 |
+| `LLMGATE_RETRY_BASE_DELAY_SECONDS` / `LLMGATE_RETRY_MAX_DELAY_SECONDS` | Equal-jitter backoff. Defaults 0.25 and 8 |
+| `LLMGATE_RETRY_AFTER_CAP_SECONDS` | Ceiling on a wait extended by `Retry-After`. Default 30 |
+| `LLMGATE_BREAKER_FAILURE_THRESHOLD` / `LLMGATE_BREAKER_COOLDOWN_SECONDS` | Consecutive retryable failures before open, then cooldown. Defaults 5 and 30 |
+| `LLMGATE_DEFAULT_REQUESTS_PER_MINUTE` / `LLMGATE_DEFAULT_TOKENS_PER_MINUTE` | Used when a key's limit column is NULL. Defaults 60 and 100000. `0` disables that bucket |
+
+Key creation accepts the same limits: `llmgate keys create --name demo --requests-per-minute 120 --tokens-per-minute 200000`, or `requests_per_minute` / `tokens_per_minute` on `POST /admin/keys`.
 
 The dev Compose file ships with a known master key and database password. Change `LLMGATE_MASTER_KEY`, `LLMGATE_KEY_PEPPER`, and the Postgres password before exposing the process.
 
@@ -165,13 +175,13 @@ Each request gets an `X-Request-ID` (honored if the caller sends one). The acces
 ## Roadmap
 
 - [x] Milestone 1 — OpenAI-compatible endpoint, provider adapters, streaming, API keys
-- [ ] Milestone 2 — Retries with backoff, provider fallback, circuit breakers, Redis token-bucket rate limiting
+- [x] Milestone 2 — Retries with backoff, provider fallback, circuit breakers, Redis token-bucket rate limiting
 - [ ] Milestone 3 — Semantic caching (embeddings + Redis vector similarity) and a load-testing baseline
 - [ ] Milestone 4 — Complexity-based smart model routing, per-team budgets, PII masking, prompt-injection guardrails
 - [ ] Milestone 5 — Request logging with cost/latency/tokens, append-only audit trail, Prometheus + Grafana, Next.js admin dashboard (keys, teams, RBAC, budgets, routing rules, usage)
 - [ ] Milestone 6 — Deployment, CI hardening, benchmark report, design-doc README
 
-Why these choices were made, and where the next milestones attach, is in [docs/design/001-architecture.md](docs/design/001-architecture.md).
+Why these choices were made, and where the next milestones attach, is in [docs/design/001-architecture.md](docs/design/001-architecture.md). The retry, breaker, and token-bucket notes are in [docs/design/002-reliability.md](docs/design/002-reliability.md).
 
 ## Project structure
 
@@ -182,7 +192,7 @@ src/llmgate/
   config.py          Environment settings
   logging.py         JSON access log
   api/               Routes, auth dependencies, SSE, request-id middleware
-  core/              Request/response schemas, model registry, chat pipeline
+  core/              Schemas, registry, pipeline, retries, breakers, token bucket
   providers/         OpenAI, Anthropic, Gemini, and Ollama adapters
   storage/           SQLAlchemy models, Alembic startup, key hashing
 config/models.yaml   Public model id -> provider
@@ -199,7 +209,13 @@ make install
 make ci          # ruff, mypy, pytest
 ```
 
-Adapter tests mock HTTP with `respx` and do not call real providers. Auth tests run against SQLite. CI also applies the Alembic migration to Postgres and round-trips a key.
+Adapter tests mock HTTP with `respx` and do not call real providers. Auth tests run against SQLite. CI applies the Alembic migrations to Postgres, round-trips a key, and runs the Redis Lua scripts against a Redis 7 service (`LLMGATE_TEST_REDIS_URL`). Locally, the same tests use `fakeredis` plus `lupa` unless that variable is set.
+
+The reliability demo is in-process and deterministic:
+
+```bash
+python scripts/reliability_demo.py
+```
 
 Run the gateway on the host only if Postgres and Redis are already reachable and `alembic.ini` is on the working directory path:
 
