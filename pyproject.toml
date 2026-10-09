@@ -41,6 +41,7 @@ dev = [
   "mypy>=1.13",
   "aiosqlite>=0.20",
   "fakeredis>=2.26",
+  "lupa>=2.0",
   "openai>=1.55",
 ]
 
@@ -73,12 +74,12 @@ line-length = 100
 # `src` is where first-party packages live. Path detection alone is not stable:
 # if these directories do not resolve, Ruff still treats the project name
 # (`llmgate`) as first-party and `tests` as a local-folder import.
-src = ["src", "tests"]
+src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint.isort]
 # Pin both packages so I001 does not depend on cwd, an editable install, or
 # whether `tests` is discovered on disk. Local and CI must use this list.
-known-first-party = ["llmgate", "tests"]
+known-first-party = ["llmgate", "scripts", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]

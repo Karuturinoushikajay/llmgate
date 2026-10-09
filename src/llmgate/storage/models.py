@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, String, Uuid
+from sqlalchemy import DateTime, Integer, String, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -27,3 +27,7 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # NULL inherits the gateway default at request time, so a config change applies
+    # to existing keys without a migration of every row.
+    requests_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)

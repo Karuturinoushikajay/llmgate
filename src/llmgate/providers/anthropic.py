@@ -24,6 +24,7 @@ from llmgate.providers.http import (
     assign_if_set,
     iter_sse_json,
     raise_for_status,
+    request_timeout,
     require_credentials,
 )
 
@@ -52,21 +53,26 @@ class AnthropicProvider:
         self,
         request: ChatCompletionRequest,
         upstream_model: str,
+        *,
+        upstream_timeout: httpx.Timeout | None = None,
     ) -> ChatCompletionResponse:
         require_credentials(self.name, self.api_key)
         response = await self.http.post(
             self._url(),
             json=self._payload(request, upstream_model, stream=False),
             headers=self._headers(),
+            timeout=request_timeout(upstream_timeout),
         )
         if response.status_code >= 400:
-            raise_for_status(self.name, response.status_code, response.content)
+            raise_for_status(self.name, response.status_code, response.content, response.headers)
         return self._response_from_upstream(response.json(), request.model)
 
     async def stream(
         self,
         request: ChatCompletionRequest,
         upstream_model: str,
+        *,
+        upstream_timeout: httpx.Timeout | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         require_credentials(self.name, self.api_key)
         completion_id = new_completion_id()
@@ -80,10 +86,11 @@ class AnthropicProvider:
             self._url(),
             json=self._payload(request, upstream_model, stream=True),
             headers=self._headers(),
+            timeout=request_timeout(upstream_timeout),
         ) as response:
             if response.status_code >= 400:
                 body = await response.aread()
-                raise_for_status(self.name, response.status_code, body)
+                raise_for_status(self.name, response.status_code, body, response.headers)
             async for event in iter_sse_json(response):
                 event_type = event.get("type")
                 if event_type == "message_start":

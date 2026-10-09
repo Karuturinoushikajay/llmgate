@@ -38,6 +38,58 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LLMGATE_LOG_LEVEL")
     alembic_ini: str = Field(default="alembic.ini", alias="LLMGATE_ALEMBIC_INI")
     request_timeout_seconds: float = Field(default=300.0, alias="LLMGATE_REQUEST_TIMEOUT_SECONDS")
+    upstream_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        alias="LLMGATE_UPSTREAM_TIMEOUT_SECONDS",
+    )
+    upstream_connect_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        alias="LLMGATE_UPSTREAM_CONNECT_TIMEOUT_SECONDS",
+    )
+    retry_max_attempts: int = Field(default=3, ge=1, alias="LLMGATE_RETRY_MAX_ATTEMPTS")
+    retry_base_delay_seconds: float = Field(
+        default=0.25,
+        ge=0,
+        alias="LLMGATE_RETRY_BASE_DELAY_SECONDS",
+    )
+    retry_max_delay_seconds: float = Field(
+        default=8.0,
+        ge=0,
+        alias="LLMGATE_RETRY_MAX_DELAY_SECONDS",
+    )
+    retry_after_cap_seconds: float = Field(
+        default=30.0,
+        ge=0,
+        alias="LLMGATE_RETRY_AFTER_CAP_SECONDS",
+    )
+    breaker_failure_threshold: int = Field(
+        default=5,
+        ge=1,
+        alias="LLMGATE_BREAKER_FAILURE_THRESHOLD",
+    )
+    breaker_cooldown_seconds: float = Field(
+        default=30.0,
+        ge=0,
+        alias="LLMGATE_BREAKER_COOLDOWN_SECONDS",
+    )
+    breaker_half_open_max: int = Field(default=1, ge=1, alias="LLMGATE_BREAKER_HALF_OPEN_MAX")
+    default_requests_per_minute: int = Field(
+        default=60,
+        ge=0,
+        alias="LLMGATE_DEFAULT_REQUESTS_PER_MINUTE",
+    )
+    default_tokens_per_minute: int = Field(
+        default=100_000,
+        ge=0,
+        alias="LLMGATE_DEFAULT_TOKENS_PER_MINUTE",
+    )
+    output_token_reservation: int = Field(
+        default=256,
+        ge=0,
+        alias="LLMGATE_OUTPUT_TOKEN_RESERVATION",
+    )
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")

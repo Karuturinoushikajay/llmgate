@@ -2,25 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Protocol
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from llmgate.config import Settings
 from llmgate.core.pipeline import ChatPipeline
+from llmgate.core.redis_client import RedisClient
 from llmgate.core.registry import ModelRegistry
 from llmgate.providers.base import ChatProvider
 
-
-class RedisClient(Protocol):
-    """The slice of Redis milestone 1 uses. Rate limiting will widen this."""
-
-    def ping(self, **kwargs: Any) -> Awaitable[bool]: ...
-
-    def aclose(self, *args: Any, **kwargs: Any) -> Awaitable[None]: ...
+__all__ = ["GatewayState", "RedisClient"]
 
 
 @dataclass

@@ -44,6 +44,16 @@ def run(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="llmgate", description="LLMGate admin commands")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -51,6 +61,18 @@ def _parser() -> argparse.ArgumentParser:
     actions = keys.add_subparsers(dest="action", required=True)
     create = actions.add_parser("create", help="Create a key and print it once")
     create.add_argument("--name", required=True)
+    create.add_argument(
+        "--requests-per-minute",
+        type=_non_negative_int,
+        default=None,
+        help="Override the gateway default. 0 disables the request limit.",
+    )
+    create.add_argument(
+        "--tokens-per-minute",
+        type=_non_negative_int,
+        default=None,
+        help="Override the gateway default. 0 disables the token limit.",
+    )
     actions.add_parser("list", help="List keys (secrets are not shown)")
     revoke = actions.add_parser("revoke", help="Revoke a key by id")
     revoke.add_argument("key_id")
@@ -70,6 +92,8 @@ async def _dispatch(args: argparse.Namespace) -> None:
                     session,
                     name=args.name,
                     pepper=settings.key_pepper,
+                    requests_per_minute=args.requests_per_minute,
+                    tokens_per_minute=args.tokens_per_minute,
                 )
                 _print(
                     {
@@ -78,6 +102,8 @@ async def _dispatch(args: argparse.Namespace) -> None:
                         "key": raw_key,
                         "key_prefix": row.key_prefix,
                         "created_at": _iso(row.created_at),
+                        "requests_per_minute": row.requests_per_minute,
+                        "tokens_per_minute": row.tokens_per_minute,
                     }
                 )
             elif args.action == "list":
@@ -106,6 +132,8 @@ def _public_view(row: ApiKey) -> dict[str, Any]:
         "created_at": _iso(row.created_at),
         "revoked_at": _iso(row.revoked_at),
         "last_used_at": _iso(row.last_used_at),
+        "requests_per_minute": row.requests_per_minute,
+        "tokens_per_minute": row.tokens_per_minute,
     }
 
 

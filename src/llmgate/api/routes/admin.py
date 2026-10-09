@@ -19,6 +19,8 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(requir
 
 class CreateKeyRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+    requests_per_minute: int | None = Field(default=None, ge=0)
+    tokens_per_minute: int | None = Field(default=None, ge=0)
 
 
 class KeyView(BaseModel):
@@ -28,6 +30,8 @@ class KeyView(BaseModel):
     created_at: datetime
     revoked_at: datetime | None
     last_used_at: datetime | None
+    requests_per_minute: int | None
+    tokens_per_minute: int | None
 
 
 class KeyCreated(KeyView):
@@ -48,6 +52,8 @@ def _view(row: ApiKey) -> KeyView:
         created_at=row.created_at,
         revoked_at=row.revoked_at,
         last_used_at=row.last_used_at,
+        requests_per_minute=row.requests_per_minute,
+        tokens_per_minute=row.tokens_per_minute,
     )
 
 
@@ -59,6 +65,8 @@ async def create_key(body: CreateKeyRequest, request: Request) -> KeyCreated:
             session,
             name=body.name,
             pepper=gateway.settings.key_pepper,
+            requests_per_minute=body.requests_per_minute,
+            tokens_per_minute=body.tokens_per_minute,
         )
         created = KeyCreated(
             id=row.id,
@@ -67,6 +75,8 @@ async def create_key(body: CreateKeyRequest, request: Request) -> KeyCreated:
             created_at=row.created_at,
             revoked_at=row.revoked_at,
             last_used_at=row.last_used_at,
+            requests_per_minute=row.requests_per_minute,
+            tokens_per_minute=row.tokens_per_minute,
             key=raw_key,
         )
     return created

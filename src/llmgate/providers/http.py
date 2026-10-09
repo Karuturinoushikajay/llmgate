@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -21,7 +24,46 @@ def require_credentials(provider: str, api_key: str) -> None:
         raise ProviderNotConfiguredError(provider)
 
 
-def raise_for_status(provider: str, status_code: int, body: bytes) -> None:
+def request_timeout(timeout: httpx.Timeout | None) -> Any:
+    """Use the per-call timeout, or the shared client's timeout when none was set.
+
+    The return is ``Any`` because ``httpx.USE_CLIENT_DEFAULT`` is a private sentinel
+    that the public stubs do not name, and ``post(..., timeout=)`` accepts it.
+    """
+    if timeout is None:
+        return httpx.USE_CLIENT_DEFAULT
+    return timeout
+
+
+def parse_retry_after(headers: httpx.Headers | None) -> float | None:
+    """Return a Retry-After delay in seconds, or None when the header is absent or invalid."""
+    if headers is None:
+        return None
+    raw = headers.get("retry-after")
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        return max(0.0, float(text))
+    except ValueError:
+        pass
+    try:
+        parsed = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return max(0.0, (parsed - datetime.now(UTC)).total_seconds())
+
+
+def raise_for_status(
+    provider: str,
+    status_code: int,
+    body: bytes,
+    headers: httpx.Headers | None = None,
+) -> None:
     """Map an upstream HTTP error onto an OpenAI-style gateway error.
 
     Authentication failures stay 502. A 401 from the provider means the
@@ -29,17 +71,28 @@ def raise_for_status(provider: str, status_code: int, body: bytes) -> None:
     rotate a gateway key that is fine.
     """
     if status_code in (401, 403):
-        raise ProviderError(f"{provider} rejected the gateway credentials", status_code=502)
+        # Bad gateway credentials will not succeed on retry, and must not open the breaker.
+        raise ProviderError(
+            f"{provider} rejected the gateway credentials",
+            status_code=502,
+            retryable=False,
+        )
     message = _error_message(provider, body)
+    retry_after = parse_retry_after(headers)
     if status_code == 400:
         raise InvalidRequestError(message)
     if status_code == 404:
         raise InvalidRequestError(message, param="model", code="model_not_found")
     if status_code == 429:
-        raise RateLimitError(message)
+        forwarded: dict[str, str] = {}
+        if retry_after is not None:
+            forwarded["retry-after"] = str(max(1, math.ceil(retry_after)))
+        raise RateLimitError(message, retry_after=retry_after, response_headers=forwarded)
     if status_code in (408, 504):
-        raise ProviderError(message, status_code=504)
-    raise ProviderError(message, status_code=502)
+        raise ProviderError(message, status_code=504, retryable=True)
+    if status_code >= 500:
+        raise ProviderError(message, status_code=502, retryable=True)
+    raise ProviderError(message, status_code=502, retryable=False)
 
 
 def _error_message(provider: str, body: bytes) -> str:

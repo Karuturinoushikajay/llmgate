@@ -1,5 +1,7 @@
 # Public model id -> provider + upstream model name.
 # A request can also name a provider directly: "anthropic/claude-3-5-sonnet-20241022".
+# `fallbacks` are tried, in order, when the primary fails in a retryable way,
+# its circuit breaker is open, or it is not configured. Prefixed names have no chain.
 models:
   - id: gpt-4o-mini
     provider: openai
@@ -7,6 +9,11 @@ models:
   - id: gpt-4o
     provider: openai
     upstream_model: gpt-4o
+    fallbacks:
+      - provider: anthropic
+        upstream_model: claude-3-5-haiku-20241022
+      - provider: gemini
+        upstream_model: gemini-2.0-flash
   - id: claude-3-5-sonnet
     provider: anthropic
     upstream_model: claude-3-5-sonnet-20241022
