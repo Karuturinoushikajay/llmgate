@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: llmgate
+          POSTGRES_PASSWORD: llmgate
+          POSTGRES_DB: llmgate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U llmgate -d llmgate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LLMGATE_TEST_DATABASE_URL: postgresql+asyncpg://llmgate:llmgate@localhost:5432/llmgate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check . && ruff format --check .
+      - name: Type check
+        run: mypy
+      - name: Test
+        run: pytest

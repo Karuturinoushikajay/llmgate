@@ -1,0 +1,54 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      LLMGATE_DATABASE_URL: postgresql+asyncpg://llmgate:llmgate@postgres:5432/llmgate
+      LLMGATE_REDIS_URL: redis://redis:6379/0
+      LLMGATE_MASTER_KEY: ${LLMGATE_MASTER_KEY:-dev-master-key-change-me}
+      LLMGATE_KEY_PEPPER: ${LLMGATE_KEY_PEPPER:-dev-pepper-change-me}
+      LLMGATE_MODELS_PATH: config/models.yaml
+      LLMGATE_LOG_LEVEL: ${LLMGATE_LOG_LEVEL:-INFO}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: llmgate
+      POSTGRES_PASSWORD: llmgate
+      POSTGRES_DB: llmgate
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmgate -d llmgate"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  pgdata:

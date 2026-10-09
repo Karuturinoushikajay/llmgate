@@ -1,0 +1,107 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llmgate"
+version = "0.1.0"
+description = "OpenAI-compatible gateway for multiple LLM providers"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "LLMGate contributors" }]
+keywords = ["llm", "gateway", "openai", "fastapi"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: FastAPI",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "httpx>=0.27",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+  "sqlalchemy[asyncio]>=2.0.36",
+  "asyncpg>=0.30",
+  "alembic>=1.14",
+  "redis>=5.2",
+  "pyyaml>=6.0.2",
+  "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "respx>=0.21",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "aiosqlite>=0.20",
+  "fakeredis>=2.26",
+  "openai>=1.55",
+]
+
+[project.scripts]
+llmgate = "llmgate.cli:main"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/llmgate",
+  "tests",
+  "config",
+  "alembic",
+  "alembic.ini",
+  "README.md",
+  "LICENSE",
+  "docs",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "postgres: integration test that needs LLMGATE_TEST_DATABASE_URL",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# `src` is where first-party packages live. Path detection alone is not stable:
+# if these directories do not resolve, Ruff still treats the project name
+# (`llmgate`) as first-party and `tests` as a local-folder import.
+src = ["src", "tests"]
+
+[tool.ruff.lint.isort]
+# Pin both packages so I001 does not depend on cwd, an editable install, or
+# whether `tests` is discovered on disk. Local and CI must use this list.
+known-first-party = ["llmgate", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+# FastAPI requires Depends() in parameter defaults.
+extend-ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*.py" = ["E501"]
+# Fixture payloads are JSON documents; wrapping them does not make them clearer.
+"tests/**/*.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+mypy_path = "src"
+packages = ["llmgate"]
+plugins = []
+
+[[tool.mypy.overrides]]
+module = ["alembic.*", "yaml"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["alembic.*"]
+ignore_errors = true
