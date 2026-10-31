@@ -10,6 +10,7 @@ import structlog
 
 from llmgate.core.context import (
     api_key_id_var,
+    cache_var,
     error_var,
     model_var,
     provider_var,
@@ -57,6 +58,7 @@ def log_access(
         "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         "model": model_var.get(),
         "provider": provider_var.get(),
+        "cache": cache_var.get(),
         "stream": stream_var.get(),
         "api_key_id": api_key_id_var.get(),
         "prompt_tokens": usage.prompt_tokens if usage is not None else None,

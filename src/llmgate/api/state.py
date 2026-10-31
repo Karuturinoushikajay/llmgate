@@ -38,6 +38,8 @@ class RedisClient(Protocol):
 
     def incr(self, name: str) -> Awaitable[Any]: ...
 
+    def execute_command(self, *args: Any, **kwargs: Any) -> Awaitable[Any]: ...
+
 
 @dataclass
 class GatewayState:

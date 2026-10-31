@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from llmgate.api.deps import ApiKeyContext, get_gateway, require_api_key
 from llmgate.api.sse import format_chunk, format_done, format_error, should_emit
-from llmgate.core.context import model_var, provider_var, stream_var, usage_var
+from llmgate.core.context import cache_var, model_var, provider_var, stream_var, usage_var
 from llmgate.core.errors import GatewayError, ProviderError
 from llmgate.core.schemas import ChatCompletionChunk, ChatCompletionRequest, Usage
 
@@ -35,7 +35,10 @@ async def chat_completions(
     result = await gateway.pipeline.complete(body)
     if result.usage is not None:
         usage_var.set(result.usage)
-    return JSONResponse(content=result.model_dump(mode="json", exclude_none=True))
+    return JSONResponse(
+        content=result.model_dump(mode="json", exclude_none=True),
+        headers={"X-LLMGate-Cache": cache_var.get()},
+    )
 
 
 async def _streaming_response(
@@ -84,6 +87,7 @@ async def _streaming_response(
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "X-LLMGate-Cache": cache_var.get(),
         },
     )
 

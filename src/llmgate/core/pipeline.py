@@ -1,8 +1,9 @@
 """The single seam every chat request passes through.
 
-The pipeline resolves the model, retries transient failures, follows the
-registry fallback list, and skips providers whose circuit is open. The HTTP
-handlers stay responsible for auth, SSE framing, and the access log.
+The pipeline resolves the model, consults the semantic cache, retries
+transient failures, follows the registry fallback list, and skips providers
+whose circuit is open. The HTTP handlers stay responsible for auth, SSE
+framing, and the access log.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import random
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -17,7 +19,9 @@ import structlog
 
 from llmgate.config import Settings
 from llmgate.core.breaker import CircuitBreaker
-from llmgate.core.context import model_var, provider_var
+from llmgate.core.cache import SemanticCache
+from llmgate.core.context import cache_var, model_var, provider_var
+from llmgate.core.embeddings import Embedder, embedding_input
 from llmgate.core.errors import (
     GatewayError,
     InvalidRequestError,
@@ -26,12 +30,25 @@ from llmgate.core.errors import (
     RateLimitError,
 )
 from llmgate.core.registry import ModelRegistry, ResolvedModel
-from llmgate.core.schemas import ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse
+from llmgate.core.schemas import (
+    ChatCompletionChunk,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    Usage,
+    completion_chunk,
+    completion_response,
+)
 from llmgate.providers.base import ChatProvider
 
 log = structlog.get_logger("llmgate")
 
 Sleep = Callable[[float], Awaitable[None]]
+
+
+@dataclass
+class _Prepared:
+    response: ChatCompletionResponse | None = None
+    vector: list[float] | None = None
 
 
 class ChatPipeline:
@@ -42,15 +59,27 @@ class ChatPipeline:
         settings: Settings,
         breaker: CircuitBreaker,
         *,
+        cache: SemanticCache | None = None,
+        embedder: Embedder | None = None,
         sleep: Sleep | None = None,
     ) -> None:
         self.registry = registry
         self.providers = providers
         self.settings = settings
         self.breaker = breaker
+        self.cache = cache
+        self.embedder = embedder
         self.sleep: Sleep = _default_sleep if sleep is None else sleep
 
     async def complete(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+        prepared = await self._prepare(request)
+        if prepared.response is not None:
+            return prepared.response
+        result = await self._complete(request)
+        await self._store(request, prepared.vector, result)
+        return result
+
+    async def _complete(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         last_error: GatewayError | None = None
         candidates = self._candidates(request)
         for index, candidate in enumerate(candidates):
@@ -89,16 +118,26 @@ class ChatPipeline:
         self,
         request: ChatCompletionRequest,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
+        prepared = await self._prepare(request)
+        if prepared.response is not None:
+            for chunk in _replay(prepared.response):
+                yield chunk
+            return
         opened = await self._open_stream(request)
         if opened is None:
             return
         iterator, first = opened
+        collected = [first]
         try:
             yield first
             async for chunk in iterator:
+                collected.append(chunk)
                 yield chunk
         finally:
             await iterator.aclose()
+        assembled = _response_from_chunks(request.model, collected)
+        if assembled is not None:
+            await self._store(request, prepared.vector, assembled)
 
     async def _open_stream(
         self,
@@ -143,6 +182,56 @@ class ChatPipeline:
             "No healthy provider available for this model",
             status_code=503,
         )
+
+    async def _prepare(self, request: ChatCompletionRequest) -> _Prepared:
+        if not self._eligible(request) or self.cache is None or self.embedder is None:
+            cache_var.set("bypass")
+            return _Prepared()
+        text = embedding_input(request).strip()
+        if not text:
+            cache_var.set("bypass")
+            return _Prepared()
+        try:
+            vector = await self.embedder.embed(text)
+            hit = await self.cache.lookup(model=request.model, vector=vector)
+        except Exception as exc:
+            log.warning("cache.bypass", error=type(exc).__name__)
+            cache_var.set("bypass")
+            return _Prepared()
+        if hit is not None:
+            cache_var.set("hit")
+            model_var.set(request.model)
+            provider_var.set("cache")
+            log.info("cache.hit", model=request.model, score=round(hit.score, 4))
+            return _Prepared(response=hit.response)
+        cache_var.set("miss")
+        return _Prepared(vector=vector)
+
+    async def _store(
+        self,
+        request: ChatCompletionRequest,
+        vector: list[float] | None,
+        response: ChatCompletionResponse,
+    ) -> None:
+        if vector is None or self.cache is None or not response.choices:
+            return
+        try:
+            await self.cache.store(model=request.model, vector=vector, response=response)
+        except Exception as exc:
+            log.warning("cache.store_failed", error=type(exc).__name__)
+
+    def _eligible(self, request: ChatCompletionRequest) -> bool:
+        if not self.settings.cache_enabled:
+            return False
+        if request.temperature is None:
+            return False
+        if request.temperature > self.settings.cache_max_temperature:
+            return False
+        if request.n not in (None, 1):
+            return False
+        if request.tools or request.tool_choice is not None:
+            return False
+        return not any(message.role == "tool" or message.tool_calls for message in request.messages)
 
     def _candidates(self, request: ChatCompletionRequest) -> list[ResolvedModel]:
         if request.n not in (None, 1):
@@ -270,6 +359,59 @@ def _map_error(provider_name: str, exc: Exception) -> GatewayError:
 
 async def _default_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
+
+
+def _replay(response: ChatCompletionResponse) -> list[ChatCompletionChunk]:
+    choice = response.choices[0]
+    return [
+        completion_chunk(
+            completion_id=response.id,
+            created=response.created,
+            model=response.model,
+            content=choice.message.content,
+            role="assistant",
+            finish_reason=choice.finish_reason,
+            usage=response.usage,
+            tool_calls=choice.message.tool_calls,
+        )
+    ]
+
+
+def _response_from_chunks(
+    model: str,
+    chunks: list[ChatCompletionChunk],
+) -> ChatCompletionResponse | None:
+    if not chunks:
+        return None
+    texts: list[str] = []
+    usage: Usage | None = None
+    finish = "stop"
+    completion_id = chunks[0].id
+    created = chunks[0].created
+    tool_calls: list[dict[str, Any]] | None = None
+    for chunk in chunks:
+        if chunk.usage is not None:
+            usage = chunk.usage
+        if not chunk.choices:
+            continue
+        choice = chunk.choices[0]
+        if choice.delta.content:
+            texts.append(choice.delta.content)
+        if choice.delta.tool_calls:
+            tool_calls = choice.delta.tool_calls
+        if choice.finish_reason:
+            finish = choice.finish_reason
+    if not texts and tool_calls is None:
+        return None
+    return completion_response(
+        completion_id=completion_id,
+        created=created,
+        model=model,
+        content="".join(texts) if texts else None,
+        finish_reason=finish,
+        usage=usage if usage is not None else Usage(),
+        tool_calls=tool_calls,
+    )
 
 
 def _backoff(attempt: int, *, base: float, cap: float) -> float:

@@ -37,7 +37,7 @@ flowchart LR
   Pipe --> Gem
   Pipe --> Oll
   API --> Logs
-  API -. connected, unused by features yet .-> Redis
+  Pipe --> Redis
 ```
 
 The chat pipeline is the extension point for later milestones: retries, fallback, caching, routing, and guardrails wrap that class instead of the HTTP handlers.
@@ -148,7 +148,7 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 | Variable | Purpose |
 | --- | --- |
 | `LLMGATE_DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://...`) |
-| `LLMGATE_REDIS_URL` | Redis URL. Token bucket and circuit breaker state. Chat fails closed if the bucket cannot run |
+| `LLMGATE_REDIS_URL` | Redis URL. Token bucket, circuit breaker, and semantic cache. Chat fails closed if the bucket cannot run |
 | `LLMGATE_MASTER_KEY` | Bearer token for `/admin` and not a gateway key |
 | `LLMGATE_KEY_PEPPER` | HMAC pepper for gateway key hashes. Changing it invalidates existing keys |
 | `LLMGATE_MODELS_PATH` | Registry YAML. Default `config/models.yaml` |
@@ -160,6 +160,11 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 | `LLMGATE_CB_RECOVERY_SECONDS` | How long an open provider is skipped. Default `30` |
 | `LLMGATE_RATE_LIMIT_BURST` | Tokens in a gateway key's bucket. Default `60` |
 | `LLMGATE_RATE_LIMIT_REFILL_PER_SECOND` | Tokens added per second. Default `1` |
+| `LLMGATE_CACHE_ENABLED` | Semantic cache switch. Default on. A failure bypasses the cache |
+| `LLMGATE_CACHE_SIMILARITY` | Minimum cosine similarity for a hit. Default `0.92` |
+| `LLMGATE_CACHE_TTL_SECONDS` | How long a cached completion is kept. Default `600` |
+| `LLMGATE_CACHE_EMBEDDING_MODEL` | OpenAI embedding model. Default `text-embedding-3-small` |
+| `LLMGATE_CACHE_MAX_TEMPERATURE` | Highest `temperature` that may be cached. Default `0` |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI credentials and optional compatible base URL |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` | Anthropic Messages API |
 | `GEMINI_API_KEY` / `GEMINI_BASE_URL` | Gemini `generateContent` |
@@ -167,18 +172,18 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 
 The dev Compose file ships with a known master key and database password. Change `LLMGATE_MASTER_KEY`, `LLMGATE_KEY_PEPPER`, and the Postgres password before exposing the process.
 
-Each request gets an `X-Request-ID` (honored if the caller sends one). The access log records that id plus status, latency, model, provider, key id, and token counts. Prompts and API keys are not logged.
+Each request gets an `X-Request-ID` (honored if the caller sends one) and `X-LLMGate-Cache` (`hit`, `miss`, or `bypass`). The access log records that id plus status, latency, model, provider, cache outcome, key id, and token counts. Prompts and API keys are not logged.
 
 ## Roadmap
 
 - [x] Milestone 1 — OpenAI-compatible endpoint, provider adapters, streaming, API keys
 - [x] Milestone 2 — Retries with backoff, provider fallback, circuit breakers, Redis token-bucket rate limiting
-- [ ] Milestone 3 — Semantic caching (embeddings + Redis vector similarity) and a load-testing baseline
+- [x] Milestone 3 — Semantic caching (embeddings + Redis vector similarity) and a load-testing baseline
 - [ ] Milestone 4 — Complexity-based smart model routing, per-team budgets, PII masking, prompt-injection guardrails
 - [ ] Milestone 5 — Request logging with cost/latency/tokens, append-only audit trail, Prometheus + Grafana, Next.js admin dashboard (keys, teams, RBAC, budgets, routing rules, usage)
 - [ ] Milestone 6 — Deployment, CI hardening, benchmark report, design-doc README
 
-Why these choices were made, and where the next milestones attach, is in [docs/design/001-architecture.md](docs/design/001-architecture.md). Milestone 2 is in [docs/design/002-reliability.md](docs/design/002-reliability.md).
+Why these choices were made, and where the next milestones attach, is in [docs/design/001-architecture.md](docs/design/001-architecture.md). Milestone 2 is in [docs/design/002-reliability.md](docs/design/002-reliability.md). Milestone 3 is in [docs/design/003-semantic-cache.md](docs/design/003-semantic-cache.md).
 
 ## Project structure
 
@@ -204,6 +209,7 @@ Requires Python 3.12.
 ```bash
 make install
 make ci          # ruff, mypy, pytest
+make load        # concurrent baseline against a gateway that is already running
 ```
 
 Adapter tests mock HTTP with `respx` and do not call real providers. Auth tests run against SQLite. CI also applies the Alembic migration to Postgres and round-trips a key.

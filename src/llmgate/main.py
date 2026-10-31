@@ -22,6 +22,8 @@ from llmgate.api.routes.models import router as models_router
 from llmgate.api.state import GatewayState, RedisClient
 from llmgate.config import Settings, get_settings, resolve_models_path
 from llmgate.core.breaker import CircuitBreaker
+from llmgate.core.cache import RedisSemanticCache, SemanticCache
+from llmgate.core.embeddings import Embedder, OpenAIEmbedder
 from llmgate.core.errors import GatewayError
 from llmgate.core.pipeline import ChatPipeline
 from llmgate.core.ratelimit import TokenBucket
@@ -38,6 +40,8 @@ def create_app(
     settings: Settings | None = None,
     *,
     redis_client: RedisClient | None = None,
+    semantic_cache: SemanticCache | None = None,
+    embedder: Embedder | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -85,6 +89,17 @@ def create_app(
                 burst=settings.rate_limit_burst,
                 refill_per_second=settings.rate_limit_refill_per_second,
             )
+            cache = semantic_cache or RedisSemanticCache(
+                redis,
+                similarity=settings.cache_similarity,
+                ttl_seconds=settings.cache_ttl_seconds,
+            )
+            vectors = embedder or OpenAIEmbedder(
+                settings.openai_api_key,
+                settings.openai_base_url,
+                settings.cache_embedding_model,
+                http,
+            )
             app.state.gateway = GatewayState(
                 settings=settings,
                 engine=engine,
@@ -93,7 +108,14 @@ def create_app(
                 http=http,
                 registry=registry,
                 providers=providers,
-                pipeline=ChatPipeline(registry, providers, settings, breaker),
+                pipeline=ChatPipeline(
+                    registry,
+                    providers,
+                    settings,
+                    breaker,
+                    cache=cache,
+                    embedder=vectors,
+                ),
                 limiter=limiter,
             )
             log.info("llmgate.started", version=__version__, models=len(registry.list_models()))

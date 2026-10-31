@@ -49,6 +49,20 @@ class Settings(BaseSettings):
         alias="LLMGATE_RATE_LIMIT_REFILL_PER_SECOND",
         gt=0,
     )
+    cache_enabled: bool = Field(default=True, alias="LLMGATE_CACHE_ENABLED")
+    cache_similarity: float = Field(default=0.92, alias="LLMGATE_CACHE_SIMILARITY", ge=0, le=1)
+    cache_ttl_seconds: int = Field(default=600, alias="LLMGATE_CACHE_TTL_SECONDS", gt=0)
+    cache_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="LLMGATE_CACHE_EMBEDDING_MODEL",
+        min_length=1,
+    )
+    cache_max_temperature: float = Field(
+        default=0,
+        alias="LLMGATE_CACHE_MAX_TEMPERATURE",
+        ge=0,
+        le=2,
+    )
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")

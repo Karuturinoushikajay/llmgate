@@ -42,7 +42,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis/redis-stack-server:7.4.0-v3
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

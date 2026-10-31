@@ -16,6 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from llmgate.core.context import (
     api_key_id_var,
+    cache_var,
     error_var,
     model_var,
     provider_var,
@@ -47,6 +48,7 @@ class AccessLogMiddleware:
             stream_var.set(False),
             api_key_id_var.set(None),
             error_var.set(None),
+            cache_var.set("bypass"),
         )
         status_code = 500
 
@@ -77,6 +79,7 @@ class AccessLogMiddleware:
             stream_var.reset(tokens[4])
             api_key_id_var.reset(tokens[5])
             error_var.reset(tokens[6])
+            cache_var.reset(tokens[7])
             structlog.contextvars.clear_contextvars()
 
 
