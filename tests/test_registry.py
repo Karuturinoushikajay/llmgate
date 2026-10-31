@@ -31,6 +31,26 @@ def test_provider_prefix_bypasses_registry() -> None:
     assert resolved.public_name == "ollama/llama3.2:latest"
 
 
+def test_shipped_fallback_chain() -> None:
+    registry = ModelRegistry.load(ROOT / "config" / "models.yaml", loaded_at=1)
+    entry = registry.get("gpt-4o-mini")
+    assert entry is not None
+    assert entry.fallbacks == ["claude-3-5-haiku", "gemini-2.0-flash"]
+    gpt4o = registry.get("gpt-4o")
+    assert gpt4o is not None
+    assert gpt4o.fallbacks == []
+
+
+def test_unknown_fallback_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "models.yaml"
+    path.write_text(
+        "models:\n  - {id: a, provider: openai, upstream_model: a, fallbacks: [missing]}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Unknown fallback"):
+        ModelRegistry.load(path, loaded_at=1)
+
+
 def test_unknown_model() -> None:
     registry = ModelRegistry.load(ROOT / "config" / "models.yaml", loaded_at=1)
     with pytest.raises(ModelNotFoundError) as exc:

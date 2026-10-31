@@ -152,16 +152,18 @@ async def test_tools_rejected_for_anthropic(client: httpx.AsyncClient, api_key: 
 
 async def test_upstream_429(client: httpx.AsyncClient, api_key: str, respx_mock: object) -> None:
     respx_mock.route(host="testserver").pass_through()  # type: ignore[attr-defined]
-    respx_mock.post(OPENAI_URL).mock(  # type: ignore[attr-defined]
+    route = respx_mock.post(OPENAI_URL).mock(  # type: ignore[attr-defined]
         return_value=httpx.Response(429, json={"error": {"message": "slow down"}})
     )
     response = await client.post(
         "/v1/chat/completions",
         headers=auth_header(api_key),
-        json=chat_body("gpt-4o-mini"),
+        json=chat_body("gpt-4o"),
     )
     assert response.status_code == 429
     assert response.json()["error"]["type"] == "rate_limit_error"
+    assert response.headers.get("retry-after") is None
+    assert len(route.calls) == 3
 
 
 async def test_validation_error_is_openai_shaped(client: httpx.AsyncClient, api_key: str) -> None:

@@ -48,7 +48,7 @@ Upstream authentication failures are returned as 502, not 401. A 401 means the c
 
 ## What is wired but not used yet
 
-Redis is connected during startup and `GET /healthz` pings it, so Compose fails closed if Redis is down. No feature reads or writes keys in Redis. Milestone 2's token bucket and milestone 3's vector cache should use the client already stored on `GatewayState` rather than creating another one.
+Redis is connected during startup and `GET /healthz` pings it, so Compose fails closed if Redis is down. Milestone 2 uses that same client for the token bucket and the circuit breaker. See [002-reliability.md](002-reliability.md). Milestone 3's vector cache should keep using it rather than creating another client.
 
 Schema changes go through Alembic. The process runs `upgrade head` on startup so `docker compose up` is enough. Tests use the same migration path against SQLite; CI also runs it against Postgres.
 

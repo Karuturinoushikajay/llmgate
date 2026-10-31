@@ -148,11 +148,18 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 | Variable | Purpose |
 | --- | --- |
 | `LLMGATE_DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://...`) |
-| `LLMGATE_REDIS_URL` | Redis URL. Connected on startup; rate limiting arrives in milestone 2 |
+| `LLMGATE_REDIS_URL` | Redis URL. Token bucket and circuit breaker state. Chat fails closed if the bucket cannot run |
 | `LLMGATE_MASTER_KEY` | Bearer token for `/admin` and not a gateway key |
 | `LLMGATE_KEY_PEPPER` | HMAC pepper for gateway key hashes. Changing it invalidates existing keys |
 | `LLMGATE_MODELS_PATH` | Registry YAML. Default `config/models.yaml` |
 | `LLMGATE_LOG_LEVEL` | Structlog level. Access lines are JSON |
+| `LLMGATE_RETRY_MAX_ATTEMPTS` | Attempts per provider before fallback. Default `3` |
+| `LLMGATE_RETRY_BASE_SECONDS` | Full-jitter backoff base. Default `0.2` |
+| `LLMGATE_RETRY_MAX_SECONDS` | Backoff cap. Default `2` |
+| `LLMGATE_CB_FAILURE_THRESHOLD` | Consecutive transient failures that open a provider. Default `5` |
+| `LLMGATE_CB_RECOVERY_SECONDS` | How long an open provider is skipped. Default `30` |
+| `LLMGATE_RATE_LIMIT_BURST` | Tokens in a gateway key's bucket. Default `60` |
+| `LLMGATE_RATE_LIMIT_REFILL_PER_SECOND` | Tokens added per second. Default `1` |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI credentials and optional compatible base URL |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` | Anthropic Messages API |
 | `GEMINI_API_KEY` / `GEMINI_BASE_URL` | Gemini `generateContent` |
@@ -165,13 +172,13 @@ Each request gets an `X-Request-ID` (honored if the caller sends one). The acces
 ## Roadmap
 
 - [x] Milestone 1 — OpenAI-compatible endpoint, provider adapters, streaming, API keys
-- [ ] Milestone 2 — Retries with backoff, provider fallback, circuit breakers, Redis token-bucket rate limiting
+- [x] Milestone 2 — Retries with backoff, provider fallback, circuit breakers, Redis token-bucket rate limiting
 - [ ] Milestone 3 — Semantic caching (embeddings + Redis vector similarity) and a load-testing baseline
 - [ ] Milestone 4 — Complexity-based smart model routing, per-team budgets, PII masking, prompt-injection guardrails
 - [ ] Milestone 5 — Request logging with cost/latency/tokens, append-only audit trail, Prometheus + Grafana, Next.js admin dashboard (keys, teams, RBAC, budgets, routing rules, usage)
 - [ ] Milestone 6 — Deployment, CI hardening, benchmark report, design-doc README
 
-Why these choices were made, and where the next milestones attach, is in [docs/design/001-architecture.md](docs/design/001-architecture.md).
+Why these choices were made, and where the next milestones attach, is in [docs/design/001-architecture.md](docs/design/001-architecture.md). Milestone 2 is in [docs/design/002-reliability.md](docs/design/002-reliability.md).
 
 ## Project structure
 

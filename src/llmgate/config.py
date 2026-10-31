@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LLMGATE_LOG_LEVEL")
     alembic_ini: str = Field(default="alembic.ini", alias="LLMGATE_ALEMBIC_INI")
     request_timeout_seconds: float = Field(default=300.0, alias="LLMGATE_REQUEST_TIMEOUT_SECONDS")
+    retry_max_attempts: int = Field(default=3, alias="LLMGATE_RETRY_MAX_ATTEMPTS", ge=1)
+    retry_base_seconds: float = Field(default=0.2, alias="LLMGATE_RETRY_BASE_SECONDS", ge=0)
+    retry_max_seconds: float = Field(default=2.0, alias="LLMGATE_RETRY_MAX_SECONDS", ge=0)
+    cb_failure_threshold: int = Field(default=5, alias="LLMGATE_CB_FAILURE_THRESHOLD", ge=1)
+    cb_recovery_seconds: float = Field(default=30.0, alias="LLMGATE_CB_RECOVERY_SECONDS", gt=0)
+    rate_limit_burst: float = Field(default=60, alias="LLMGATE_RATE_LIMIT_BURST", ge=1)
+    rate_limit_refill_per_second: float = Field(
+        default=1.0,
+        alias="LLMGATE_RATE_LIMIT_REFILL_PER_SECOND",
+        gt=0,
+    )
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")

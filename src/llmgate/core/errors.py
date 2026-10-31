@@ -87,12 +87,28 @@ class NotFoundError(GatewayError):
 
 
 class RateLimitError(GatewayError):
-    def __init__(self, message: str = "Rate limit exceeded") -> None:
+    def __init__(
+        self,
+        message: str = "Rate limit exceeded",
+        *,
+        retry_after: int | None = None,
+    ) -> None:
         super().__init__(
             message,
             status_code=429,
             error_type="rate_limit_error",
             code="rate_limit_exceeded",
+        )
+        self.retry_after = retry_after
+
+
+class ServiceUnavailableError(GatewayError):
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(
+            message,
+            status_code=503,
+            error_type="server_error",
+            code=code,
         )
 
 

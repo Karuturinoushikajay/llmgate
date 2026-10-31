@@ -4,6 +4,9 @@ models:
   - id: gpt-4o-mini
     provider: openai
     upstream_model: gpt-4o-mini
+    fallbacks:
+      - claude-3-5-haiku
+      - gemini-2.0-flash
   - id: gpt-4o
     provider: openai
     upstream_model: gpt-4o

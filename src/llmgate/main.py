@@ -21,8 +21,10 @@ from llmgate.api.routes.health import router as health_router
 from llmgate.api.routes.models import router as models_router
 from llmgate.api.state import GatewayState, RedisClient
 from llmgate.config import Settings, get_settings, resolve_models_path
+from llmgate.core.breaker import CircuitBreaker
 from llmgate.core.errors import GatewayError
 from llmgate.core.pipeline import ChatPipeline
+from llmgate.core.ratelimit import TokenBucket
 from llmgate.core.registry import ModelRegistry
 from llmgate.core.schemas import unix_timestamp
 from llmgate.logging import configure_logging
@@ -73,6 +75,16 @@ def create_app(
                 loaded_at=unix_timestamp(),
             )
             providers = build_providers(settings, http)
+            breaker = CircuitBreaker(
+                redis,
+                failure_threshold=settings.cb_failure_threshold,
+                recovery_seconds=settings.cb_recovery_seconds,
+            )
+            limiter = TokenBucket(
+                redis,
+                burst=settings.rate_limit_burst,
+                refill_per_second=settings.rate_limit_refill_per_second,
+            )
             app.state.gateway = GatewayState(
                 settings=settings,
                 engine=engine,
@@ -81,7 +93,8 @@ def create_app(
                 http=http,
                 registry=registry,
                 providers=providers,
-                pipeline=ChatPipeline(registry, providers),
+                pipeline=ChatPipeline(registry, providers, settings, breaker),
+                limiter=limiter,
             )
             log.info("llmgate.started", version=__version__, models=len(registry.list_models()))
             if settings.using_default_secrets:
@@ -121,7 +134,11 @@ def create_app(
 def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(GatewayError)
     async def gateway_error_handler(_request: Request, exc: GatewayError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content=exc.to_body())
+        headers: dict[str, str] | None = None
+        retry_after = getattr(exc, "retry_after", None)
+        if isinstance(retry_after, int):
+            headers = {"Retry-After": str(retry_after)}
+        return JSONResponse(status_code=exc.status_code, content=exc.to_body(), headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:

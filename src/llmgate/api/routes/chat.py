@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -13,7 +13,6 @@ from llmgate.api.sse import format_chunk, format_done, format_error, should_emit
 from llmgate.core.context import model_var, provider_var, stream_var, usage_var
 from llmgate.core.errors import GatewayError, ProviderError
 from llmgate.core.schemas import ChatCompletionChunk, ChatCompletionRequest, Usage
-from llmgate.providers.base import ChatProvider
 
 router = APIRouter(tags=["chat"])
 
@@ -26,24 +25,14 @@ async def chat_completions(
 ) -> Response:
     """OpenAI chat completions. ``stream: true`` returns SSE ending in ``data: [DONE]``."""
     gateway = get_gateway(request)
-    resolved, provider = gateway.pipeline.resolve(body)
-    model_var.set(resolved.public_name)
-    provider_var.set(resolved.provider)
+    model_var.set(body.model)
     stream_var.set(body.stream)
+    await gateway.limiter.consume(str(_api_key.id))
 
     if body.stream:
-        return await _streaming_response(
-            request,
-            provider,
-            body,
-            resolved.upstream_model,
-            resolved.provider,
-        )
+        return await _streaming_response(request, gateway.pipeline.stream(body), body)
 
-    try:
-        result = await provider.complete(body, resolved.upstream_model)
-    except httpx.HTTPError as exc:
-        raise _transport_error(resolved.provider, exc) from exc
+    result = await gateway.pipeline.complete(body)
     if result.usage is not None:
         usage_var.set(result.usage)
     return JSONResponse(content=result.model_dump(mode="json", exclude_none=True))
@@ -51,19 +40,13 @@ async def chat_completions(
 
 async def _streaming_response(
     request: Request,
-    provider: ChatProvider,
+    iterator: AsyncGenerator[ChatCompletionChunk, None],
     body: ChatCompletionRequest,
-    upstream_model: str,
-    provider_name: str,
 ) -> StreamingResponse:
-    iterator = provider.stream(body, upstream_model)
     try:
         first = await anext(iterator)
     except StopAsyncIteration:
         first = None
-    except httpx.HTTPError as exc:
-        await iterator.aclose()
-        raise _transport_error(provider_name, exc) from exc
     except BaseException:
         await iterator.aclose()
         raise
@@ -88,7 +71,7 @@ async def _streaming_response(
             yield format_error(exc)
             yield format_done()
         except httpx.HTTPError as exc:
-            mapped = _transport_error(provider_name, exc)
+            mapped = _transport_error(provider_var.get() or "provider", exc)
             _remember_error(request, mapped.message)
             yield format_error(mapped)
             yield format_done()

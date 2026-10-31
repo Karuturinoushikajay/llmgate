@@ -18,6 +18,7 @@ class ModelEntry(BaseModel):
     id: str = Field(min_length=1)
     provider: ProviderName
     upstream_model: str = Field(min_length=1)
+    fallbacks: list[str] = Field(default_factory=list)
 
 
 class ResolvedModel(BaseModel):
@@ -40,7 +41,11 @@ class ModelRegistry:
         ids = [entry.id for entry in entries]
         if len(ids) != len(set(ids)):
             raise ValueError(f"Duplicate model ids in {path}")
+        _validate_fallbacks(path, entries)
         return cls(entries, loaded_at=loaded_at)
+
+    def get(self, model_id: str) -> ModelEntry | None:
+        return self._models.get(model_id)
 
     def resolve(self, name: str) -> ResolvedModel:
         """Resolve ``name``.
@@ -68,3 +73,19 @@ class ModelRegistry:
 
     def list_models(self) -> list[ModelEntry]:
         return list(self._models.values())
+
+
+def _validate_fallbacks(path: Path, entries: list[ModelEntry]) -> None:
+    ids = {entry.id for entry in entries}
+    for entry in entries:
+        for name in entry.fallbacks:
+            if name == entry.id:
+                raise ValueError(f"{entry.id} in {path} cannot fall back to itself")
+            if not name.strip():
+                raise ValueError(f"Empty fallback for {entry.id} in {path}")
+            if "/" in name:
+                provider, _, upstream = name.partition("/")
+                if provider not in KNOWN_PROVIDERS or not upstream:
+                    raise ValueError(f"Invalid fallback '{name}' for {entry.id} in {path}")
+            elif name not in ids:
+                raise ValueError(f"Unknown fallback '{name}' for {entry.id} in {path}")

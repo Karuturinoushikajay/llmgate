@@ -14,7 +14,11 @@ from llmgate.main import create_app
 from tests.helpers import MASTER_KEY, ROOT
 
 
-def build_settings(database_url: str, **overrides: str) -> Settings:
+async def _no_sleep(_seconds: float) -> None:
+    return None
+
+
+def build_settings(database_url: str, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "database_url": database_url,
         "redis_url": "redis://localhost:6379/0",
@@ -39,6 +43,7 @@ async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
         build_settings(database_url), redis_client=FakeAsyncRedis(decode_responses=True)
     )
     async with app.router.lifespan_context(app):
+        app.state.gateway.pipeline.sleep = _no_sleep
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
             yield http
