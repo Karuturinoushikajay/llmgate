@@ -63,6 +63,10 @@ class Settings(BaseSettings):
         ge=0,
         le=2,
     )
+    route_simple_chars: int = Field(default=280, alias="LLMGATE_ROUTE_SIMPLE_CHARS", ge=1)
+    pii_masking: bool = Field(default=True, alias="LLMGATE_PII_MASKING")
+    guardrails_enabled: bool = Field(default=True, alias="LLMGATE_GUARDRAILS_ENABLED")
+    pricing_path: str = Field(default="config/pricing.yaml", alias="LLMGATE_PRICING_PATH")
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")

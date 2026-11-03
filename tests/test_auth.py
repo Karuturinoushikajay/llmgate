@@ -46,7 +46,7 @@ async def test_master_key_cannot_call_v1(client: httpx.AsyncClient) -> None:
 async def test_gateway_key_cannot_manage_keys(client: httpx.AsyncClient, api_key: str) -> None:
     response = await client.get("/admin/keys", headers=auth_header(api_key))
     assert response.status_code == 401
-    assert response.json()["error"]["code"] == "invalid_master_key"
+    assert response.json()["error"]["code"] == "invalid_admin"
 
 
 async def test_list_keys_hides_secret(client: httpx.AsyncClient, api_key: str) -> None:

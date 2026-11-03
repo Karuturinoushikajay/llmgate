@@ -92,12 +92,13 @@ class RateLimitError(GatewayError):
         message: str = "Rate limit exceeded",
         *,
         retry_after: int | None = None,
+        code: str = "rate_limit_exceeded",
     ) -> None:
         super().__init__(
             message,
             status_code=429,
             error_type="rate_limit_error",
-            code="rate_limit_exceeded",
+            code=code,
         )
         self.retry_after = retry_after
 

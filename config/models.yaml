@@ -22,3 +22,9 @@ models:
   - id: llama3.2
     provider: ollama
     upstream_model: llama3.2
+  - id: auto
+    provider: openai
+    upstream_model: gpt-4o-mini
+    routes:
+      simple: gpt-4o-mini
+      complex: gpt-4o

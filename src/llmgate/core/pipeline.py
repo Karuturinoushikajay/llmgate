@@ -1,9 +1,9 @@
 """The single seam every chat request passes through.
 
-The pipeline resolves the model, consults the semantic cache, retries
-transient failures, follows the registry fallback list, and skips providers
-whose circuit is open. The HTTP handlers stay responsible for auth, SSE
-framing, and the access log.
+The pipeline scans the prompt, masks PII, routes ``auto``, consults the
+semantic cache, checks the team budget, retries transient failures, follows
+the registry fallback list, and skips providers whose circuit is open. The
+HTTP handlers stay responsible for auth, SSE framing, and the access log.
 """
 
 from __future__ import annotations
@@ -19,8 +19,16 @@ import structlog
 
 from llmgate.config import Settings
 from llmgate.core.breaker import CircuitBreaker
+from llmgate.core.budget import TokenBudget
 from llmgate.core.cache import SemanticCache
-from llmgate.core.context import cache_var, model_var, provider_var
+from llmgate.core.context import (
+    cache_var,
+    model_var,
+    provider_var,
+    route_var,
+    team_budget_var,
+    team_id_var,
+)
 from llmgate.core.embeddings import Embedder, embedding_input
 from llmgate.core.errors import (
     GatewayError,
@@ -29,7 +37,10 @@ from llmgate.core.errors import (
     ProviderNotConfiguredError,
     RateLimitError,
 )
+from llmgate.core.guardrails import scan
+from llmgate.core.pii import mask_request
 from llmgate.core.registry import ModelRegistry, ResolvedModel
+from llmgate.core.routing import complexity
 from llmgate.core.schemas import (
     ChatCompletionChunk,
     ChatCompletionRequest,
@@ -61,6 +72,7 @@ class ChatPipeline:
         *,
         cache: SemanticCache | None = None,
         embedder: Embedder | None = None,
+        budget: TokenBudget | None = None,
         sleep: Sleep | None = None,
     ) -> None:
         self.registry = registry
@@ -69,14 +81,18 @@ class ChatPipeline:
         self.breaker = breaker
         self.cache = cache
         self.embedder = embedder
+        self.budget = budget
         self.sleep: Sleep = _default_sleep if sleep is None else sleep
 
     async def complete(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        prepared = await self._prepare(request)
+        screened = self._apply_policy(request)
+        prepared = await self._prepare(screened)
         if prepared.response is not None:
             return prepared.response
-        result = await self._complete(request)
-        await self._store(request, prepared.vector, result)
+        await self._enforce_budget()
+        result = await self._complete(screened)
+        await self._store(screened, prepared.vector, result)
+        await self._charge_budget(result.usage)
         return result
 
     async def _complete(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
@@ -118,12 +134,14 @@ class ChatPipeline:
         self,
         request: ChatCompletionRequest,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
-        prepared = await self._prepare(request)
+        screened = self._apply_policy(request)
+        prepared = await self._prepare(screened)
         if prepared.response is not None:
             for chunk in _replay(prepared.response):
                 yield chunk
             return
-        opened = await self._open_stream(request)
+        await self._enforce_budget()
+        opened = await self._open_stream(screened)
         if opened is None:
             return
         iterator, first = opened
@@ -135,9 +153,10 @@ class ChatPipeline:
                 yield chunk
         finally:
             await iterator.aclose()
-        assembled = _response_from_chunks(request.model, collected)
+        assembled = _response_from_chunks(screened.model, collected)
         if assembled is not None:
-            await self._store(request, prepared.vector, assembled)
+            await self._store(screened, prepared.vector, assembled)
+        await self._charge_budget(_chunk_usage(collected))
 
     async def _open_stream(
         self,
@@ -233,10 +252,64 @@ class ChatPipeline:
             return False
         return not any(message.role == "tool" or message.tool_calls for message in request.messages)
 
+    def _apply_policy(self, request: ChatCompletionRequest) -> ChatCompletionRequest:
+        if self.settings.guardrails_enabled:
+            rule = scan(request)
+            if rule is not None:
+                log.info("guardrail.blocked", rule=rule)
+                raise InvalidRequestError(
+                    f"Blocked by content policy: {rule}",
+                    param="messages",
+                    code="content_policy",
+                )
+        screened = mask_request(request) if self.settings.pii_masking else request
+        self._choose_route(screened)
+        return screened
+
+    def _choose_route(self, request: ChatCompletionRequest) -> None:
+        if "/" in request.model:
+            route_var.set("bypass")
+            return
+        entry = self.registry.get(request.model)
+        if entry is None or entry.routes is None:
+            route_var.set("bypass")
+            return
+        tier = complexity(
+            embedding_input(request),
+            len(request.messages),
+            limit=self.settings.route_simple_chars,
+        )
+        route_var.set(entry.routes.simple if tier == "simple" else entry.routes.complex)
+
+    async def _enforce_budget(self) -> None:
+        if self.budget is None:
+            return
+        team_id = team_id_var.get()
+        cap = team_budget_var.get()
+        if team_id is None or cap is None:
+            return
+        await self.budget.allow(team_id, cap)
+
+    async def _charge_budget(self, usage: Usage | None) -> None:
+        if self.budget is None:
+            return
+        team_id = team_id_var.get()
+        cap = team_budget_var.get()
+        if team_id is None or cap is None:
+            return
+        if usage is None:
+            log.warning("budget.usage_missing")
+            return
+        try:
+            await self.budget.charge(team_id, usage.total_tokens)
+        except Exception as exc:
+            log.warning("budget.charge_failed", error=type(exc).__name__)
+
     def _candidates(self, request: ChatCompletionRequest) -> list[ResolvedModel]:
         if request.n not in (None, 1):
             raise InvalidRequestError("Only n=1 is supported", param="n")
-        primary = self.registry.resolve(request.model)
+        public_name = request.model if route_var.get() == "bypass" else route_var.get()
+        primary = self.registry.resolve(public_name)
         self._reject_unsupported(request, primary.provider)
         if "/" in request.model:
             return [primary]
@@ -359,6 +432,14 @@ def _map_error(provider_name: str, exc: Exception) -> GatewayError:
 
 async def _default_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
+
+
+def _chunk_usage(chunks: list[ChatCompletionChunk]) -> Usage | None:
+    found: Usage | None = None
+    for chunk in chunks:
+        if chunk.usage is not None:
+            found = chunk.usage
+    return found
 
 
 def _replay(response: ChatCompletionResponse) -> list[ChatCompletionChunk]:

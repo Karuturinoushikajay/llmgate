@@ -9,7 +9,7 @@ import httpx
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from redis.asyncio import Redis
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -22,10 +22,13 @@ from llmgate.api.routes.models import router as models_router
 from llmgate.api.state import GatewayState, RedisClient
 from llmgate.config import Settings, get_settings, resolve_models_path
 from llmgate.core.breaker import CircuitBreaker
+from llmgate.core.budget import TokenBudget
 from llmgate.core.cache import RedisSemanticCache, SemanticCache
 from llmgate.core.embeddings import Embedder, OpenAIEmbedder
 from llmgate.core.errors import GatewayError
+from llmgate.core.metrics import render_metrics
 from llmgate.core.pipeline import ChatPipeline
+from llmgate.core.pricing import PricingTable, resolve_pricing_path
 from llmgate.core.ratelimit import TokenBucket
 from llmgate.core.registry import ModelRegistry
 from llmgate.core.schemas import unix_timestamp
@@ -78,6 +81,7 @@ def create_app(
                 resolve_models_path(settings.models_path),
                 loaded_at=unix_timestamp(),
             )
+            pricing = PricingTable.load(resolve_pricing_path(settings.pricing_path))
             providers = build_providers(settings, http)
             breaker = CircuitBreaker(
                 redis,
@@ -89,6 +93,7 @@ def create_app(
                 burst=settings.rate_limit_burst,
                 refill_per_second=settings.rate_limit_refill_per_second,
             )
+            budget = TokenBudget(redis)
             cache = semantic_cache or RedisSemanticCache(
                 redis,
                 similarity=settings.cache_similarity,
@@ -115,8 +120,10 @@ def create_app(
                     breaker,
                     cache=cache,
                     embedder=vectors,
+                    budget=budget,
                 ),
                 limiter=limiter,
+                pricing=pricing,
             )
             log.info("llmgate.started", version=__version__, models=len(registry.list_models()))
             if settings.using_default_secrets:
@@ -149,6 +156,11 @@ def create_app(
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
         return {"name": "LLMGate", "version": __version__, "docs": "/docs"}
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        body, media_type = render_metrics()
+        return Response(content=body, media_type=media_type)
 
     return app
 

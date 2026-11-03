@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from llmgate.config import Settings
 from llmgate.core.pipeline import ChatPipeline
+from llmgate.core.pricing import PricingTable
 from llmgate.core.ratelimit import TokenBucket
 from llmgate.core.registry import ModelRegistry
 from llmgate.providers.base import ChatProvider
@@ -38,6 +39,10 @@ class RedisClient(Protocol):
 
     def incr(self, name: str) -> Awaitable[Any]: ...
 
+    def incrby(self, name: str, amount: int) -> Awaitable[Any]: ...
+
+    def expire(self, name: str, seconds: int) -> Awaitable[Any]: ...
+
     def execute_command(self, *args: Any, **kwargs: Any) -> Awaitable[Any]: ...
 
 
@@ -52,3 +57,4 @@ class GatewayState:
     providers: dict[str, ChatProvider]
     pipeline: ChatPipeline
     limiter: TokenBucket
+    pricing: PricingTable

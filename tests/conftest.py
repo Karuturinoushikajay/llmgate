@@ -25,6 +25,7 @@ def build_settings(database_url: str, **overrides: object) -> Settings:
         "master_key": MASTER_KEY,
         "key_pepper": "test-pepper",
         "models_path": str(ROOT / "config" / "models.yaml"),
+        "pricing_path": str(ROOT / "config" / "pricing.yaml"),
         "log_level": "INFO",
         "alembic_ini": str(ROOT / "alembic.ini"),
         "openai_api_key": "test-openai",
