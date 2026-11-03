@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from llmgate.storage.models import ApiKey
+from llmgate.storage.models import ApiKey, Team
 
 _KEY_PREFIX = "sk-lg-"
 _PREFIX_LEN = 12
@@ -33,12 +33,36 @@ def key_prefix(raw_key: str) -> str:
     return raw_key[:_PREFIX_LEN]
 
 
-async def create_api_key(session: AsyncSession, *, name: str, pepper: str) -> tuple[ApiKey, str]:
+async def create_team(
+    session: AsyncSession,
+    *,
+    name: str,
+    monthly_token_budget: int | None,
+) -> Team:
+    row = Team(name=name, monthly_token_budget=monthly_token_budget)
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def list_teams(session: AsyncSession) -> list[Team]:
+    result = await session.scalars(select(Team).order_by(Team.created_at.desc()))
+    return list(result.all())
+
+
+async def create_api_key(
+    session: AsyncSession,
+    *,
+    name: str,
+    pepper: str,
+    team_id: uuid.UUID | None = None,
+) -> tuple[ApiKey, str]:
     raw_key = generate_api_key()
     row = ApiKey(
         name=name,
         key_prefix=key_prefix(raw_key),
         key_hash=hash_api_key(raw_key, pepper),
+        team_id=team_id,
     )
     session.add(row)
     await session.flush()

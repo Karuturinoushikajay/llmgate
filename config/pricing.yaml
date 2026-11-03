@@ -1,0 +1,24 @@
+# USD per 1_000_000 tokens for the public model id that served the call.
+# Missing models yield a null estimated cost, not zero.
+models:
+  gpt-4o-mini:
+    prompt: 0.15
+    completion: 0.60
+  gpt-4o:
+    prompt: 2.50
+    completion: 10.00
+  claude-3-5-haiku:
+    prompt: 0.80
+    completion: 4.00
+  claude-3-5-sonnet:
+    prompt: 3.00
+    completion: 15.00
+  gemini-2.0-flash:
+    prompt: 0.10
+    completion: 0.40
+  llama3.2:
+    prompt: 0.0
+    completion: 0.0
+  auto:
+    prompt: 0.15
+    completion: 0.60

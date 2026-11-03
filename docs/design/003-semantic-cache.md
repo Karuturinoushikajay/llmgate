@@ -30,4 +30,4 @@ A stream that hits is replayed as SSE and still ends with `data: [DONE]`. A stre
 
 ## What this milestone still does not do
 
-No budgets, no PII redaction, no dashboard. The cache does not store tool traffic, and it does not try to cache a completion that the provider refused.
+Budgets, PII masking, and the injection denylist are milestone 4. See [004-guardrails.md](004-guardrails.md). The dashboard stays a later milestone. The cache does not store tool traffic, and it does not try to cache a completion that the provider refused.

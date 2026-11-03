@@ -21,10 +21,13 @@ from llmgate.core.context import (
     model_var,
     provider_var,
     request_id_var,
+    route_var,
     stream_var,
+    team_budget_var,
+    team_id_var,
     usage_var,
 )
-from llmgate.logging import log_access
+from llmgate.logging import record_access
 
 
 class AccessLogMiddleware:
@@ -49,6 +52,9 @@ class AccessLogMiddleware:
             api_key_id_var.set(None),
             error_var.set(None),
             cache_var.set("bypass"),
+            route_var.set("bypass"),
+            team_id_var.set(None),
+            team_budget_var.set(None),
         )
         status_code = 500
 
@@ -65,12 +71,21 @@ class AccessLogMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             state = scope.get("state")
-            log_access(
+            session_factory = None
+            pricing = None
+            app = scope.get("app")
+            gateway = getattr(getattr(app, "state", None), "gateway", None)
+            if gateway is not None:
+                session_factory = gateway.session_factory
+                pricing = gateway.pricing
+            await record_access(
                 method=str(scope.get("method", "")),
                 path=str(scope.get("path", "")),
                 status_code=status_code,
                 started=started,
                 scope_state=state if isinstance(state, dict) else None,
+                session_factory=session_factory,
+                pricing=pricing,
             )
             request_id_var.reset(tokens[0])
             usage_var.reset(tokens[1])
@@ -80,6 +95,9 @@ class AccessLogMiddleware:
             api_key_id_var.reset(tokens[5])
             error_var.reset(tokens[6])
             cache_var.reset(tokens[7])
+            route_var.reset(tokens[8])
+            team_id_var.reset(tokens[9])
+            team_budget_var.reset(tokens[10])
             structlog.contextvars.clear_contextvars()
 
 

@@ -41,6 +41,28 @@ def test_shipped_fallback_chain() -> None:
     assert gpt4o.fallbacks == []
 
 
+def test_shipped_auto_route() -> None:
+    registry = ModelRegistry.load(ROOT / "config" / "models.yaml", loaded_at=1)
+    entry = registry.get("auto")
+    assert entry is not None
+    assert entry.routes is not None
+    assert entry.routes.simple == "gpt-4o-mini"
+    assert entry.routes.complex == "gpt-4o"
+
+
+def test_unknown_route_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "models.yaml"
+    path.write_text(
+        "models:\n"
+        "  - {id: a, provider: openai, upstream_model: a}\n"
+        "  - {id: auto, provider: openai, upstream_model: a,\n"
+        "     routes: {simple: missing, complex: a}}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Unknown route"):
+        ModelRegistry.load(path, loaded_at=1)
+
+
 def test_unknown_fallback_rejected(tmp_path: Path) -> None:
     path = tmp_path / "models.yaml"
     path.write_text(

@@ -13,3 +13,6 @@ build/
 .python-version.local
 *.db
 .DS_Store
+node_modules/
+dashboard/.next/
+dashboard/out/

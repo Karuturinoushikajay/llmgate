@@ -14,11 +14,17 @@ ProviderName = Literal["openai", "anthropic", "gemini", "ollama"]
 KNOWN_PROVIDERS: frozenset[str] = frozenset({"openai", "anthropic", "gemini", "ollama"})
 
 
+class ModelRoutes(BaseModel):
+    simple: str = Field(min_length=1)
+    complex: str = Field(min_length=1)
+
+
 class ModelEntry(BaseModel):
     id: str = Field(min_length=1)
     provider: ProviderName
     upstream_model: str = Field(min_length=1)
     fallbacks: list[str] = Field(default_factory=list)
+    routes: ModelRoutes | None = None
 
 
 class ResolvedModel(BaseModel):
@@ -42,6 +48,7 @@ class ModelRegistry:
         if len(ids) != len(set(ids)):
             raise ValueError(f"Duplicate model ids in {path}")
         _validate_fallbacks(path, entries)
+        _validate_routes(path, entries)
         return cls(entries, loaded_at=loaded_at)
 
     def get(self, model_id: str) -> ModelEntry | None:
@@ -89,3 +96,15 @@ def _validate_fallbacks(path: Path, entries: list[ModelEntry]) -> None:
                     raise ValueError(f"Invalid fallback '{name}' for {entry.id} in {path}")
             elif name not in ids:
                 raise ValueError(f"Unknown fallback '{name}' for {entry.id} in {path}")
+
+
+def _validate_routes(path: Path, entries: list[ModelEntry]) -> None:
+    ids = {entry.id for entry in entries}
+    for entry in entries:
+        if entry.routes is None:
+            continue
+        for name in (entry.routes.simple, entry.routes.complex):
+            if name == entry.id:
+                raise ValueError(f"{entry.id} in {path} cannot route to itself")
+            if "/" in name or name not in ids:
+                raise ValueError(f"Unknown route '{name}' for {entry.id} in {path}")

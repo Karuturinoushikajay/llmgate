@@ -40,7 +40,7 @@ flowchart LR
   Pipe --> Redis
 ```
 
-The chat pipeline is the extension point for later milestones: retries, fallback, caching, routing, and guardrails wrap that class instead of the HTTP handlers.
+The chat pipeline is the extension point for reliability, caching, routing, and guardrails. Observability writes beside that seam rather than inside the adapters.
 
 ## Quickstart
 
@@ -51,7 +51,7 @@ cp .env.example .env   # optional
 docker compose up --build
 ```
 
-The gateway listens on `http://localhost:8000`. `GET /healthz` checks Postgres and Redis. Interactive API docs are at `http://localhost:8000/docs`.
+The gateway listens on `http://localhost:8000`. `GET /healthz` checks Postgres and Redis. Interactive API docs are at `http://localhost:8000/docs`. The admin UI is on `http://localhost:3000`, Grafana on `http://localhost:3001`, and Prometheus on `http://localhost:9090`.
 
 Create a gateway key (the raw value is printed once):
 
@@ -148,7 +148,7 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 | Variable | Purpose |
 | --- | --- |
 | `LLMGATE_DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://...`) |
-| `LLMGATE_REDIS_URL` | Redis URL. Token bucket, circuit breaker, and semantic cache. Chat fails closed if the bucket cannot run |
+| `LLMGATE_REDIS_URL` | Redis URL. Token bucket, circuit breaker, semantic cache, and team budgets. Chat fails closed if the bucket or a capped budget cannot run |
 | `LLMGATE_MASTER_KEY` | Bearer token for `/admin` and not a gateway key |
 | `LLMGATE_KEY_PEPPER` | HMAC pepper for gateway key hashes. Changing it invalidates existing keys |
 | `LLMGATE_MODELS_PATH` | Registry YAML. Default `config/models.yaml` |
@@ -165,6 +165,11 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 | `LLMGATE_CACHE_TTL_SECONDS` | How long a cached completion is kept. Default `600` |
 | `LLMGATE_CACHE_EMBEDDING_MODEL` | OpenAI embedding model. Default `text-embedding-3-small` |
 | `LLMGATE_CACHE_MAX_TEMPERATURE` | Highest `temperature` that may be cached. Default `0` |
+| `LLMGATE_ROUTE_SIMPLE_CHARS` | Longest masked prompt `auto` still treats as simple. Default `280` |
+| `LLMGATE_PII_MASKING` | Replace emails, phones, SSNs, and card numbers before the provider. Default on |
+| `LLMGATE_GUARDRAILS_ENABLED` | Reject a small prompt-injection denylist. Default on |
+| `LLMGATE_PRICING_PATH` | USD rates per million tokens. Default `config/pricing.yaml` |
+| `NEXT_PUBLIC_GATEWAY_URL` | Browser URL for the Next.js dashboard. Default `http://localhost:8000` |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI credentials and optional compatible base URL |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` | Anthropic Messages API |
 | `GEMINI_API_KEY` / `GEMINI_BASE_URL` | Gemini `generateContent` |
@@ -172,34 +177,37 @@ Only `n=1` is supported. Tool calling is forwarded to OpenAI and rejected for th
 
 The dev Compose file ships with a known master key and database password. Change `LLMGATE_MASTER_KEY`, `LLMGATE_KEY_PEPPER`, and the Postgres password before exposing the process.
 
-Each request gets an `X-Request-ID` (honored if the caller sends one) and `X-LLMGate-Cache` (`hit`, `miss`, or `bypass`). The access log records that id plus status, latency, model, provider, cache outcome, key id, and token counts. Prompts and API keys are not logged.
+Each request gets an `X-Request-ID` (honored if the caller sends one), `X-LLMGate-Cache` (`hit`, `miss`, or `bypass`), and `X-LLMGate-Route` (the public model `auto` resolved to, or `bypass`). The access log records that id plus status, latency, model, provider, route, cache outcome, key id, token counts, and estimated cost. The same fields are appended to `request_logs`. Prompts and API keys are not logged. Scrapable metrics live at `GET /metrics`.
 
 ## Roadmap
 
 - [x] Milestone 1 — OpenAI-compatible endpoint, provider adapters, streaming, API keys
 - [x] Milestone 2 — Retries with backoff, provider fallback, circuit breakers, Redis token-bucket rate limiting
 - [x] Milestone 3 — Semantic caching (embeddings + Redis vector similarity) and a load-testing baseline
-- [ ] Milestone 4 — Complexity-based smart model routing, per-team budgets, PII masking, prompt-injection guardrails
-- [ ] Milestone 5 — Request logging with cost/latency/tokens, append-only audit trail, Prometheus + Grafana, Next.js admin dashboard (keys, teams, RBAC, budgets, routing rules, usage)
-- [ ] Milestone 6 — Deployment, CI hardening, benchmark report, design-doc README
+- [x] Milestone 4 — Complexity-based smart model routing, per-team budgets, PII masking, prompt-injection guardrails
+- [x] Milestone 5 — Request logging with cost/latency/tokens, append-only audit trail, Prometheus + Grafana, Next.js admin dashboard (keys, teams, RBAC, budgets, routing rules, usage)
+- [x] Milestone 6 — Deployment, CI hardening, benchmark report, design-doc README
 
-Why these choices were made, and where the next milestones attach, is in [docs/design/001-architecture.md](docs/design/001-architecture.md). Milestone 2 is in [docs/design/002-reliability.md](docs/design/002-reliability.md). Milestone 3 is in [docs/design/003-semantic-cache.md](docs/design/003-semantic-cache.md).
+Design notes, in order: [001 architecture](docs/design/001-architecture.md), [002 reliability](docs/design/002-reliability.md), [003 semantic cache](docs/design/003-semantic-cache.md), [004 guardrails](docs/design/004-guardrails.md), [005 observability](docs/design/005-observability.md), [006 ship](docs/design/006-ship.md). Deploy steps are in [docs/deploy.md](docs/deploy.md). Fill [docs/benchmark.md](docs/benchmark.md) from `make load`.
 
 ## Project structure
 
 ```
 src/llmgate/
-  main.py            FastAPI app, lifespan, OpenAI-shaped errors
+  main.py            FastAPI app, lifespan, OpenAI-shaped errors, /metrics
   cli.py             llmgate keys create | list | revoke
   config.py          Environment settings
-  logging.py         JSON access log
+  logging.py         JSON access log, request rows, Prometheus observe
   api/               Routes, auth dependencies, SSE, request-id middleware
-  core/              Request/response schemas, model registry, chat pipeline
+  core/              Pipeline, cache, budget, guardrails, pricing, metrics
   providers/         OpenAI, Anthropic, Gemini, and Ollama adapters
   storage/           SQLAlchemy models, Alembic startup, key hashing
 config/models.yaml   Public model id -> provider
-alembic/             Postgres schema migrations
-tests/               Adapter, streaming, auth, CLI, and OpenAI SDK tests
+config/pricing.yaml  USD per million tokens
+dashboard/           Next.js admin UI
+deploy/              Prometheus and Grafana provisioning
+alembic/             Schema migrations
+tests/               Adapter, streaming, auth, reliability, cache, guardrails
 ```
 
 ## Development

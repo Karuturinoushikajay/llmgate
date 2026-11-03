@@ -22,8 +22,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis/redis-stack-server:7.4.0-v3
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       LLMGATE_TEST_DATABASE_URL: postgresql+asyncpg://llmgate:llmgate@localhost:5432/llmgate
+      LLMGATE_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,3 +47,29 @@ jobs:
         run: mypy
       - name: Test
         run: pytest
+
+  gateway-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build gateway image
+        run: docker build -t llmgate:ci .
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package.json
+      - name: Install
+        run: npm install
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_GATEWAY_URL: http://127.0.0.1:8000
